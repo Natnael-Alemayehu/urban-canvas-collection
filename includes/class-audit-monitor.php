@@ -196,6 +196,111 @@ class Audit_Monitor {
             self::log('integrity_baseline', sprintf('File integrity baseline created for %d files.', count($current)));
             return;
         }
+
+        $changed = [];
+        foreach ($current as $file => $hash) {
+            if(isset($baseline[$file]) && $baseline[$file] !== $hash ) {
+                $changed[] = $file;
+            }
+        }
+
+        if ( ! empty($changed) ) {
+            self::log(
+                'file_change_detected',
+                sprintf(
+                    'File change detected in %d monitored files: %s', 
+                    count( $changed ),
+                    implode(', ', array_map('basename', $changed))
+                ),
+                true
+            );
+        } else {
+            self::log('integrity_ok', 'File integrity scan passed no changes detected.');
+        }
+        // Update baseline after scan
+        update_option( self::BASELINE_OPTION, $current, false );
+    }
+
+    /** Rebuild  baseline manually (eg., after an international WP core update). */
+    public static function rebuild_baseline(): void {
+        delete_option(self::BASELINE_OPTION);
+    }
+
+    // Alerting
+
+    private static function send_alert(string $event_type, string $message, string $ip): void {
+        $to = get_option('admin_email');
+        $subject = sprintf(
+            /* Transators: %s : event type*/
+            __('[Urban Canvas Security] Alert: %s', 'urban-canvas'),
+            strtoupper( str_replace('_', ' ', $event_type))
+        );
+
+        $body = sprintf(
+            "Urban Canvas Security Alert \n\n" . 
+            "Event: %s \n" . 
+            "Message: %s \n" .
+            "IP: %s \n" . 
+            "Time: %s \n\n" . 
+            "Review the full audit log in WP admin Urban Canvas Audit log.",
+            $event_type, 
+            $message, 
+            $ip, 
+            current_time('Y-m-d H:i:s T')
+        );
+
+        wp_mail( $to, $subject, $body );
+    }
+
+    // Log Retrival
+
+    /**
+     * Retrive recent log entries.
+     * 
+     * @param int       $limit Number of rows.
+     * @param string    $event_type Optional filter.
+     * @return array
+     */
+    public static function get_logs(int $limit = 100, string $event_type=''): array {
+        global $wpdb;
+        $table = $wpdb -> prefix . 'uc_audit_log';
+
+        if($event_type) {
+            // phpc:ignore Wordpress.DB.DirectDatabaseQuery.DirectQuery,Wordpress.DB.PreparedSQL.InteropelatedNotPrepared
+            return $wpdb -> get_results(
+                $wpdb -> prepare(
+                    "SELECT * FROM {$TABLE} WHERE event_type = %s ORDER BY DESC LIMIT %d",
+                    $event_type,
+                    $limit
+                )
+            );
+        }
+
+        return $wpdb -> get_results(
+            $wpdb -> prepare("SELECT * FROM {$table} ORDER BY id DESC LIMIT %d", $limit)
+        );
+    }
+
+    /** Prune oldest rows beyonf MAX_LOG_ROWS. */
+    public function prune_log(): void {
+        global $wpdb;
+        $table = $wpdb -> prefix . 'uc_audit_log';
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$table} WHERE id NOT IN (SELECT id FROM (SELECT id FROM {$table} ORDER BY id DESC LIMIT %d) AS t)",
+                SELF::MAX_LOG_ROWS
+            )
+        );
+    }
+
+    // Helpers
+    private static function get_ip(): string {
+        $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
+        if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $parts = explode(',', sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])));
+            $ip = trim($parts[0]);
+        }
+        return filter_var($ip, FILTER_VALIDATE_IP) ?: '0.0.0.0';
     }
 
 }

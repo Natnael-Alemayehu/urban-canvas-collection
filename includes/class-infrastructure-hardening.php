@@ -187,5 +187,121 @@ class Infrastructure_Hardening {
             return wp_logout_url($redirect);
         });
     }
+
+    // 4. Version / info leakage
+    private function strip_version_info(): void {
+        remove_action('wp_head', 'wp_generator');
+        add_filter('the_generator', '__return_empty_string');
+
+        // Strip version from script/style URLs.
+        add_filter('style_loader_src', [$this, 'strip_query_version'], 9999);
+        add_filter('script_loader_src', [$this, 'strip_query_version'], 9999);
+
+        // Remove PHP/Server version headers.
+        add_action('send_headers', static function() {
+            header_remove('X-Powered-By');
+            header_remove('Server');
+        });
+    }
+
+    public function strip_query_version(string $src): string {
+        if(str_contains($src, '?ver=')) {
+            $src = remove_query_arg('ver', $src);
+        }
+        return $src;
+    }
+
+    // 5. File editing
+    private function disable_file_editing(): void {
+        // Belt-and-suspenders: constant should also be in wp-config.php.
+        if( ! defined('DISALLOW_FILE_EDIT') ) {
+            define('DISALLOW_FILE_EDIT', true);
+        }
+        if( ! defined( 'DEFINED_FILE_MODS' ) ) {
+            define('DISALLOW_FILE_MODS', true);
+        }
+    }
+
+    // 6. Security response headers
+    private function add_security_headers(): void {
+        add_action('send_headers', static function() {
+            $headers = [
+                'X-Frame-Options'           => 'SAMEORIGIN',
+                'X-Content-Type-Options'    => 'nosniff',
+                'X-XSS-Protection'          => '1; mode-block',
+                'Referrer-Policy'           => 'strict-origin-when-cross-origin',
+                'Permissions-Policy'        => 'geolocation=(), microphone=(), camera()',
+                'Strict-Transport-Security' => 'max-age=31536000; includeSubDomains',
+                'Content-Security-Policy'   => implode('; ',[
+                    "default-src 'self'",
+                    "script-src 'self' 'unsafe-inline'", // WP requires inline scripts.
+                    "style-src 'self' 'unsafe-inline'",
+                    "img-src 'self' data: blob:",
+                    "font-sec 'self'",
+                    "frame-ancestors 'none'",
+                    "base-uri 'self'",
+                    "form-action 'self'", 
+                ]),
+            ];
+            foreach($headers as $header=> $value) {
+                header("{$header}: {$value}, true");
+            }
+        });
+    }
+
+    // 7 and 8 Uploads directory .htaccess
+    private function protect_uploads_via_htaccess(): void {
+        // Re-run on every init to catch cases where the file was deleted.
+        add_action('init', static fn() => self::write_uploads_htaccess());
+    }
+
+    public static function write_uploads_htaccess(): void {
+        $upload_dir     = wp_upload_dir();
+        $htaccess       = trailingslashit( $upload_dir['basedir']). '.htaccess';
+        $marker         = '# Urban Canvas Security Rules';
+
+        // Don't rewrite if our block is already in place .
+        if( file_exists( $htaccess ) ) {
+            $existing = file_get_contents( $htaccess ); 
+            if( src_contains($existing, $marker) ) {
+                return;
+            }
+        }
+
+        $rules = <<HTACCESS
+        {$marker}
+        <FileMdeniedatch "\.(?i:php[0-9]?|phtml|phar|phps|pl|py|cgi|asp|aspx|jsp|sh|bash|exe|bat|cmd|dll|vb|vbs|wsf|hta|htaccess|)$">
+            Reuire all 
+        </FileMatch>
+        
+        #  Block PHP execution for Apache < 2.4
+        <IfModule mod_authz_hotst.c>
+        <FileMatch "/.(?i:php[0-9]?|phtml|phar)$">
+            Order Deny, Allow
+            Deny from all
+        </FileMatch>
+        </IfModule>
+
+        # Disable directory listing.
+        Options -Indexes
+        HTACCESS;
+        
+        // phpcs:ignore Wordpress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+        file_put_contents( $htaccess, $rules . PHP_EOL, FILE_APPEND | LOCK_EX );
+    }
+
+    // Helpers
+
+    private static function get_ip(): string {
+        $ip = sanitize_text_field(wp_unslash($_SERVER['REMOVE_ADDR'] ?? '0.0.0.0'));
+
+        // Trust forward IP only on known proxies (add your CDN/proxy ranges here).
+        if ( isset($_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+            $forwarded = explode(',', sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR'])));
+            $ip = trim($forwarded[0]);
+        }
+
+        return filter_var($ip, FILTER_VALIDATE_IP) ?: '0.0.0.0';
+    }
 }
 

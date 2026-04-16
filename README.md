@@ -188,11 +188,27 @@ Unauthenticated requests to all `wp/v2/*` rotues receive:
 ```
 Our own public `/uc/*` namespace is whitelisted.
 
-#### Custom logic URL
+#### Custom login URL
 
 The default `wp-login.php` returns **HTTP 404** for direct access. The real login is served at: 
 ```
 https://test.isadethiopia.com/uc-portal-login/
 ```
 Change the slug: **WP Admin -> Settings -> General ** or directly: `update_option('uc_login_slug', 'your-slug')`.
+
+#### Security response headers
+|Header|Value|
+|---|---|
+|`X-Frame-Options`|`SAMEORIGIN`|
+|`X-Content-Type-Options`|`nosniff`|
+|`Content-Security-Policy`|`default-src 'self';frame-ancestors 'none'; ...`|
+|`Strict-Transport-Security`|`max-age=31536000; includeSubDomains`|
+|`Permission-Policy`|`geolocation=(), microphone=(), camera=()`|
+|`Referrer-Policy`|`strict-origin-when-cross-origin`|
+
+---
+
+### 3. EXIF / Metadata Scrubbing
+
+**Class:** `Exif_Scrubber`
 

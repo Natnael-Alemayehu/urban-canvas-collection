@@ -1,13 +1,19 @@
 <?php
 /**
- * Plugin Name: Urban Collective - Hardened Submission Portal
- * Plugin URI: https://https://github.com/Natnael-Alemayehu/urban-canvas-collection
- * Description: Complete secutiry reconstruction for the urban Canvas Collective art submission portal.
- *              Covers hardend, zero-trust roles, audit monitoring, and a font-end submission workflow.
- * Version: 1.0.0
- * Author: Nate
- * 
- * @ package UrbanCanvas; 
+ * Plugin Name:     Urban Canvas Collective – Hardened Submission Portal
+ * Plugin URI:      https://github.com/your-org/urban-canvas-security
+ * Description:     Complete security reconstruction for the Urban Canvas Collective art
+ *                  submission portal. Covers hardened file uploads, infrastructure
+ *                  obfuscation, EXIF scrubbing, zero-trust roles, audit monitoring,
+ *                  and a front-end submission workflow.
+ * Version:         1.0.0
+ * Author:          Your Name
+ * License:         GPL-2.0-or-later
+ * Text Domain:     urban-canvas
+ * Requires at least: 6.0
+ * Requires PHP:    8.1
+ *
+ * @package UrbanCanvas
  */
 
 namespace UrbanCanvas;

@@ -91,17 +91,21 @@ class Infrastructure_Hardening {
 		add_filter(
 			'rest_authentication_errors',
 			static function ( $result ) {
-				// If already authenticated, proceed.
 				if ( true === $result || is_user_logged_in() ) {
 					return $result;
 				}
 
-				// Allow our own namespace (public endpoints) and the oEmbed endpoint
-				// which WordPress themes often require.
 				$request     = $GLOBALS['wp']->query_vars['rest_route'] ?? '';
 				$public_prefixes = [ '/oembed/', '/uc/' ];
 
 				foreach ( $public_prefixes as $prefix ) {
+					if ( str_starts_with( $request, $prefix ) ) {
+						return $result;
+					}
+				}
+
+				$wp_core_prefixes = [ '/wp/v2/media', '/wp/v2/types', '/wp/v2/statuses', '/wp/v2/taxonomies', '/wp-site-health/v1' ];
+				foreach ( $wp_core_prefixes as $prefix ) {
 					if ( str_starts_with( $request, $prefix ) ) {
 						return $result;
 					}
@@ -121,7 +125,6 @@ class Infrastructure_Hardening {
 			20
 		);
 
-		// Remove REST API link from <head> for public pages.
 		remove_action( 'wp_head', 'rest_output_link_wp_head', 10 );
 		remove_action( 'wp_head', 'wp_oembed_add_discovery_links', 10 );
 		remove_action( 'template_redirect', 'rest_output_link_header', 11 );
@@ -132,16 +135,13 @@ class Infrastructure_Hardening {
 	private function relocate_login(): void {
 		$slug = get_option( self::LOGIN_SLUG_OPTION, self::DEFAULT_LOGIN_SLUG );
 
-		// Intercept wp-login.php access attempts.
 		add_action( 'init', static function () use ( $slug ) {
 			$request_uri = strtolower( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ?? '' ) ) );
 
-			// Allow our custom slug.
 			if ( str_contains( $request_uri, $slug ) ) {
 				return;
 			}
 
-			// Block direct wp-login.php access (except wp-cron, AJAX).
 			if (
 				str_contains( $request_uri, 'wp-login.php' ) &&
 				! str_contains( $request_uri, 'wp-cron' ) &&
@@ -149,11 +149,10 @@ class Infrastructure_Hardening {
 			) {
 				Audit_Monitor::log(
 					'login_probe',
-					sprintf( 'Direct wp-login.php access blocked from IP %s', self::get_ip() )
+					sprintf( 'Direct wp-login.php access redirected from IP %s', self::get_ip() )
 				);
-				status_header( 404 );
-				nocache_headers();
-				exit( 'Not found.' );
+				wp_safe_redirect( home_url( '/' . $slug . '/' ) );
+				exit;
 			}
 		}, 1 );
 
@@ -174,6 +173,8 @@ class Infrastructure_Hardening {
 		// Serve the login page at the custom URL.
 		add_action( 'template_redirect', static function () {
 			if ( '1' === get_query_var( 'uc_login' ) ) {
+				global $pagenow;
+				$pagenow = 'wp-login.php';
 				require_once ABSPATH . 'wp-login.php';
 				exit;
 			}
@@ -181,12 +182,20 @@ class Infrastructure_Hardening {
 
 		// Rewrite all login URLs.
 		add_filter( 'login_url', static function ( string $url ) use ( $slug ): string {
-			return home_url( '/' . $slug . '/' );
+			$parsed   = wp_parse_url( $url );
+			$new_url  = home_url( '/' . $slug . '/' );
+
+			if ( ! empty( $parsed['query'] ) ) {
+				parse_str( $parsed['query'], $params );
+				$new_url = add_query_arg( $params, $new_url );
+			}
+
+			return $new_url;
 		} );
 
 		add_filter( 'logout_url', static function ( string $url ) use ( $slug ): string {
 			$redirect = home_url( '/' . $slug . '/' );
-			return wp_logout_url( $redirect );
+			return $redirect . '?action=logout&_wpnonce=' . wp_create_nonce( 'log-out' );
 		} );
 	}
 
@@ -196,22 +205,10 @@ class Infrastructure_Hardening {
 		remove_action( 'wp_head', 'wp_generator' );
 		add_filter( 'the_generator', '__return_empty_string' );
 
-		// Strip version from script/style URLs.
-		add_filter( 'style_loader_src',  [ $this, 'strip_query_version' ], 9999 );
-		add_filter( 'script_loader_src', [ $this, 'strip_query_version' ], 9999 );
-
-		// Remove PHP/Server version headers.
 		add_action( 'send_headers', static function () {
 			header_remove( 'X-Powered-By' );
 			header_remove( 'Server' );
 		} );
-	}
-
-	public function strip_query_version( string $src ): string {
-		if ( str_contains( $src, '?ver=' ) ) {
-			$src = remove_query_arg( 'ver', $src );
-		}
-		return $src;
 	}
 
 	// ── 5. File editing ───────────────────────────────────────────────────────
@@ -230,6 +227,10 @@ class Infrastructure_Hardening {
 
 	private function add_security_headers(): void {
 		add_action( 'send_headers', static function () {
+			if ( is_admin() ) {
+				return;
+			}
+
 			$headers = [
 				'X-Frame-Options'           => 'SAMEORIGIN',
 				'X-Content-Type-Options'    => 'nosniff',
@@ -239,9 +240,9 @@ class Infrastructure_Hardening {
 				'Strict-Transport-Security' => 'max-age=31536000; includeSubDomains',
 				'Content-Security-Policy'   => implode( '; ', [
 					"default-src 'self'",
-					"script-src 'self' 'unsafe-inline'", // WP requires inline scripts.
+					"script-src 'self' 'unsafe-inline'",
 					"style-src 'self' 'unsafe-inline'",
-					"img-src 'self' data: blob:",
+					"img-src 'self' data: blob: https://secure.gravatar.com",
 					"font-src 'self'",
 					"frame-ancestors 'none'",
 					"base-uri 'self'",
@@ -258,8 +259,6 @@ class Infrastructure_Hardening {
 	// ── 7 & 8. Uploads directory .htaccess ───────────────────────────────────
 
 	private function protect_uploads_via_htaccess(): void {
-		// Re-run on every init to catch cases where the file was deleted.
-		add_action( 'init', static fn() => self::write_uploads_htaccess() );
 	}
 
 	public static function write_uploads_htaccess(): void {

@@ -22,7 +22,7 @@ class Admin_Dashboard {
 		add_action( 'admin_menu',    [ $this, 'register_menus'     ] );
 		add_action( 'admin_init',    [ $this, 'handle_admin_forms' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_assets' ] );
-		add_action( 'init',          [ $this, 'handle_file_download' ] );
+		add_action( 'admin_init',    [ $this, 'handle_file_download' ] );
 	}
 
 	// ── Menus ─────────────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ class Admin_Dashboard {
 	// ── Secure File Download ──────────────────────────────────────────────────
 
 	public function handle_file_download(): void {
-		if ( ! is_admin() || empty( $_GET['uc_download'] ) ) {
+		if ( empty( $_GET['uc_download'] ) ) {
 			return;
 		}
 

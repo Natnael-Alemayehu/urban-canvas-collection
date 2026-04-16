@@ -71,6 +71,10 @@ add_action( 'plugins_loaded', static function () {
 	( new Submission_Handler() )->init();
 	( new Submission_CPT() )->init();
 	( new Admin_Dashboard() )->init();
+
+	add_filter( 'map_meta_cap', [ Artist_Role::class, 'map_meta_caps' ], 10, 4 );
+	Artist_Role::lock_dashboard();
+	Artist_Role::block_media_library();
 } );
 
 register_activation_hook(   UC_PLUGIN_FILE, [ 'UrbanCanvas\Artist_Role', 'activate'   ] );

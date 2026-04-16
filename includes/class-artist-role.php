@@ -25,7 +25,6 @@ class Artist_Role {
 	/** Called on plugin activation. */
 	public static function activate(): void {
 		self::register_role();
-		self::lock_dashboard();
 		flush_rewrite_rules();
 	}
 
@@ -131,8 +130,3 @@ class Artist_Role {
 		return $caps;
 	}
 }
-
-// Wire up the meta-cap filter at load time.
-add_filter( 'map_meta_cap', [ Artist_Role::class, 'map_meta_caps' ], 10, 4 );
-Artist_Role::lock_dashboard();
-Artist_Role::block_media_library();
